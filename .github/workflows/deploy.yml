@@ -14,6 +14,10 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# 提前切到 Node.js 24 运行 JS actions，消除 Node 20 弃用警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -38,6 +42,9 @@ jobs:
         run: pnpm build
 
       - uses: actions/configure-pages@v5
+        with:
+          # 首次部署时自动启用 Pages（免去手动到 Settings → Pages 切换 Source）
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
