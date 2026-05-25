@@ -35,6 +35,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Test
+        run: pnpm test
+
       - name: Build
         env:
           # Pages 子路径 = /<repo-name>/，从 GITHUB_REPOSITORY 自动推导

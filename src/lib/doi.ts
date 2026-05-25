@@ -8,6 +8,7 @@ import type {
 } from './gb7714/types'
 
 const DOI_RE = /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i
+const doiCache = new Map<string, Partial<Reference>>()
 const DOI_PRIORITY_FIELDS: FieldName[] = [
   'title',
   'authors',
@@ -49,11 +50,15 @@ function hasFieldValue(value: Reference[FieldName] | undefined): boolean {
 
 export function extractIdentifiers(raw: string): IdentifierInfo {
   const match = raw.match(DOI_RE)
-  return match ? { doi: match[0].replace(/[.,;)\]]+$/, '') } : {}
+  return match ? { doi: normalizeDoi(match[0]) } : {}
 }
 
 export async function enrichByDoi(doi: string, signal?: AbortSignal): Promise<Partial<Reference>> {
-  const url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`
+  const normalizedDoi = normalizeDoi(doi)
+  const cached = doiCache.get(normalizedDoi)
+  if (cached) return cached
+
+  const url = `https://api.crossref.org/works/${encodeURIComponent(normalizedDoi)}`
   const res = await fetch(url, { signal })
   if (!res.ok) {
     throw new Error(`Crossref 请求失败: HTTP ${res.status}`)
@@ -62,7 +67,17 @@ export async function enrichByDoi(doi: string, signal?: AbortSignal): Promise<Pa
   if (!data.message) {
     throw new Error('Crossref 返回为空')
   }
-  return crossrefToReference(data.message)
+  const ref = crossrefToReference(data.message)
+  doiCache.set(normalizedDoi, ref)
+  return ref
+}
+
+export function clearDoiCache(): void {
+  doiCache.clear()
+}
+
+function normalizeDoi(doi: string): string {
+  return doi.trim().replace(/[.,;)\]]+$/, '').toLowerCase()
 }
 
 interface MergeResult {

@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { extractIdentifiers, mergeReference } from './doi'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { clearDoiCache, enrichByDoi, extractIdentifiers, mergeReference } from './doi'
 import type { Reference } from './gb7714/types'
 
 describe('extractIdentifiers', () => {
@@ -9,6 +9,34 @@ describe('extractIdentifiers', () => {
     )
 
     expect(identifiers).toEqual({ doi: '10.1000/xyz-123' })
+  })
+})
+
+describe('enrichByDoi', () => {
+  afterEach(() => {
+    clearDoiCache()
+    vi.restoreAllMocks()
+  })
+
+  test('reuses cached Crossref metadata for duplicate DOI lookups', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        message: {
+          DOI: '10.1000/xyz-123',
+          type: 'journal-article',
+          title: ['Correct title'],
+          'container-title': ['Correct Journal'],
+          issued: { 'date-parts': [[2024]] },
+        },
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await enrichByDoi('10.1000/xyz-123')
+    await enrichByDoi(' 10.1000/XYZ-123 ')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 
