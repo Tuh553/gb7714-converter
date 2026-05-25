@@ -74,6 +74,24 @@ export interface Reference {
 
 export type FieldName = keyof Reference
 export type ConfidenceMap = Partial<Record<FieldName, number>>
+export type FieldSource = 'llm' | 'doi' | 'user'
+
+export interface IdentifierInfo {
+  doi?: string
+}
+
+export type ValidationSeverity = 'error' | 'warning' | 'hint'
+
+export interface ValidationIssue {
+  id: string
+  severity: ValidationSeverity
+  code: string
+  message: string
+  field?: FieldName | 'authors' | 'type'
+}
+
+export type ReviewFilter = 'all' | 'issue' | 'error' | 'warning' | 'missing' | 'failed' | 'edited'
+export type ReviewSortMode = 'original' | 'issue-count' | 'recently-edited'
 
 // 单条解析结果在 UI 中的运行时状态
 export type ItemStatus = 'pending' | 'parsing' | 'done' | 'error'
@@ -86,4 +104,10 @@ export interface ParsedItem {
   confidence?: ConfidenceMap
   notes?: string
   error?: string
+  issues?: ValidationIssue[]
+  sources?: Partial<Record<FieldName, FieldSource>>
+  identifier?: IdentifierInfo
+  editedFields?: FieldName[]
+  lastEditedAt?: number
+  reviewed?: boolean
 }

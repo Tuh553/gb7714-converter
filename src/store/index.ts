@@ -9,9 +9,14 @@ import type {
   FieldName,
   ParsedItem,
   Reference,
+  ReviewFilter,
+  ReviewSortMode,
+  ValidationIssue,
 } from '../lib/gb7714/types'
 import { splitReferences, type SplitStrategy } from '../lib/split'
 import { parseReference, type LLMConfig } from '../lib/llm/parse'
+import { enrichByDoi, extractIdentifiers, mergeReference } from '../lib/doi'
+import { validateReference } from '../lib/validation'
 
 interface SettingsState {
   config: LLMConfig
@@ -41,6 +46,9 @@ interface WorkState {
   items: ParsedItem[]
   isRunning: boolean
   abortController: AbortController | null
+  reviewFilter: ReviewFilter
+  sortMode: ReviewSortMode
+  activeReviewId: string | null
 
   setInput: (s: string) => void
   computeSplits: () => void
@@ -52,6 +60,10 @@ interface WorkState {
   retryItem: (id: string) => Promise<void>
   updateField: (id: string, field: FieldName, value: unknown) => void
   bumpConfidence: (id: string, field: FieldName) => void
+  setReviewFilter: (filter: ReviewFilter) => void
+  setSortMode: (mode: ReviewSortMode) => void
+  setActiveReviewId: (id: string | null) => void
+  setReviewed: (id: string, reviewed: boolean) => void
   clearAll: () => void
 }
 
@@ -67,12 +79,69 @@ function patchItems(
   return items.map((x) => (x.id === id ? { ...x, ...patch } : x))
 }
 
+function llmSources(ref: Reference): ParsedItem['sources'] {
+  const sources: ParsedItem['sources'] = {}
+  for (const [key, value] of Object.entries(ref) as Array<[FieldName, Reference[FieldName]]>) {
+    if (value === undefined) continue
+    if (Array.isArray(value) && value.length === 0) continue
+    sources[key] = 'llm'
+  }
+  return sources
+}
+
+function createHintIssue(code: string, message: string, field?: ValidationIssue['field']): ValidationIssue {
+  return {
+    id: `hint:${code}:${field ?? 'general'}`,
+    severity: 'hint',
+    code,
+    message,
+    field,
+  }
+}
+
+async function processParsedItem(
+  cfg: LLMConfig,
+  raw: string,
+  signal?: AbortSignal,
+): Promise<Pick<ParsedItem, 'ref' | 'confidence' | 'notes' | 'issues' | 'sources' | 'identifier' | 'reviewed'>> {
+  const identifier = extractIdentifiers(raw)
+  const doiIssues: ValidationIssue[] = []
+  let doiRef: Partial<Reference> = {}
+
+  if (identifier.doi) {
+    try {
+      doiRef = await enrichByDoi(identifier.doi, signal)
+    } catch (error) {
+      const e = error as Error
+      if (e.name === 'AbortError' || signal?.aborted) throw e
+      doiIssues.push(createHintIssue('doi-lookup-failed', 'DOI 元数据拉取失败，已回退到纯 LLM 解析', 'doi'))
+    }
+  }
+
+  const result = await parseReference(cfg, raw, signal)
+  const merged = mergeReference(result.ref, doiRef)
+  const issues = [...merged.warnings, ...doiIssues, ...validateReference(merged.ref)]
+
+  return {
+    ref: merged.ref,
+    confidence: result.confidence,
+    notes: result.notes,
+    issues,
+    sources: Object.keys(merged.sources).length > 0 ? merged.sources : llmSources(result.ref),
+    identifier,
+    reviewed: false,
+  }
+}
+
 export const useWorkStore = create<WorkState>((set, get) => ({
   input: '',
   splitStrategy: 'empty',
   items: [],
   isRunning: false,
   abortController: null,
+  reviewFilter: 'all',
+  sortMode: 'original',
+  activeReviewId: null,
 
   setInput: (s) => set({ input: s }),
 
@@ -95,6 +164,12 @@ export const useWorkStore = create<WorkState>((set, get) => ({
         ref: undefined,
         confidence: undefined,
         error: undefined,
+        issues: undefined,
+        sources: undefined,
+        identifier: undefined,
+        editedFields: undefined,
+        lastEditedAt: undefined,
+        reviewed: false,
       }),
     }))
   },
@@ -140,13 +215,17 @@ export const useWorkStore = create<WorkState>((set, get) => ({
         items: patchItems(s.items, id, { status: 'parsing', error: undefined }),
       }))
       try {
-        const result = await parseReference(cfg, item.raw, controller.signal)
+        const result = await processParsedItem(cfg, item.raw, controller.signal)
         set((s) => ({
           items: patchItems(s.items, id, {
             status: 'done',
             ref: result.ref,
             confidence: result.confidence,
             notes: result.notes,
+            issues: result.issues,
+            sources: result.sources,
+            identifier: result.identifier,
+            reviewed: result.reviewed,
           }),
         }))
       } catch (err) {
@@ -199,13 +278,17 @@ export const useWorkStore = create<WorkState>((set, get) => ({
       items: patchItems(s.items, id, { status: 'parsing', error: undefined }),
     }))
     try {
-      const result = await parseReference(cfg, item.raw)
+      const result = await processParsedItem(cfg, item.raw)
       set((s) => ({
         items: patchItems(s.items, id, {
           status: 'done',
           ref: result.ref,
           confidence: result.confidence,
           notes: result.notes,
+          issues: result.issues,
+          sources: result.sources,
+          identifier: result.identifier,
+          reviewed: result.reviewed,
         }),
       }))
     } catch (err) {
@@ -224,7 +307,18 @@ export const useWorkStore = create<WorkState>((set, get) => ({
         if (x.id !== id || !x.ref) return x
         const nextRef = { ...x.ref, [field]: value } as Reference
         const nextConf: ConfidenceMap = { ...(x.confidence ?? {}), [field]: 1 }
-        return { ...x, ref: nextRef, confidence: nextConf }
+        const editedFields = Array.from(new Set([...(x.editedFields ?? []), field]))
+        const nextSources = { ...(x.sources ?? llmSources(x.ref)), [field]: 'user' as const }
+        return {
+          ...x,
+          ref: nextRef,
+          confidence: nextConf,
+          issues: validateReference(nextRef),
+          sources: nextSources,
+          editedFields,
+          lastEditedAt: Date.now(),
+          reviewed: false,
+        }
       }),
     }))
   },
@@ -239,5 +333,21 @@ export const useWorkStore = create<WorkState>((set, get) => ({
     }))
   },
 
-  clearAll: () => set({ input: '', splitStrategy: 'empty', items: [] }),
+  setReviewFilter: (reviewFilter) => set({ reviewFilter }),
+  setSortMode: (sortMode) => set({ sortMode }),
+  setActiveReviewId: (activeReviewId) => set({ activeReviewId }),
+  setReviewed: (id, reviewed) =>
+    set((s) => ({
+      items: patchItems(s.items, id, { reviewed }),
+    })),
+
+  clearAll: () =>
+    set({
+      input: '',
+      splitStrategy: 'empty',
+      items: [],
+      reviewFilter: 'all',
+      sortMode: 'original',
+      activeReviewId: null,
+    }),
 }))

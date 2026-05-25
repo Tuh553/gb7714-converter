@@ -6,15 +6,25 @@ import { formatReference } from '@/lib/gb7714/format'
 import type { ParsedItem } from '@/lib/gb7714/types'
 import { FieldEditor } from './FieldEditor'
 
-export function ItemCard({ item, index }: { item: ParsedItem; index: number }) {
+export function ItemCard({ item, index, active = false }: { item: ParsedItem; index: number; active?: boolean }) {
   const [expanded, setExpanded] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
   const retryItem = useWorkStore((s) => s.retryItem)
   const deleteSegment = useWorkStore((s) => s.deleteSegment)
   const updateSegmentText = useWorkStore((s) => s.updateSegmentText)
   const mergeWithPrev = useWorkStore((s) => s.mergeWithPrev)
+  const setActiveReviewId = useWorkStore((s) => s.setActiveReviewId)
+  const setReviewed = useWorkStore((s) => s.setReviewed)
 
   const formatted = item.ref ? safeFormat(item.ref) : ''
+  const issues = item.issues ?? []
+  const highestSeverity = issues.some((issue) => issue.severity === 'error')
+    ? 'error'
+    : issues.some((issue) => issue.severity === 'warning')
+      ? 'warning'
+      : issues.some((issue) => issue.severity === 'hint')
+        ? 'info'
+        : null
 
   const copy = async () => {
     if (!formatted) return
@@ -23,8 +33,25 @@ export function ItemCard({ item, index }: { item: ParsedItem; index: number }) {
     setTimeout(() => setCopied(false), 1500)
   }
 
+  const focusField = (field: string | undefined) => {
+    setExpanded(true)
+    setActiveReviewId(item.id)
+    if (!field) return
+    window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-item-id="${item.id}"][data-field="${field}"]`,
+      )
+      target?.focus()
+      target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 0)
+  }
+
   return (
-    <Card className="p-3.5 space-y-2.5">
+    <Card
+      id={`item-${item.id}`}
+      className={`p-3.5 space-y-2.5 ${active ? 'ring-2 ring-primary/40 border-primary/40' : ''}`}
+      onClick={() => setActiveReviewId(item.id)}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
           <span className="text-xs text-muted-foreground font-mono">[{index + 1}]</span>
@@ -40,6 +67,12 @@ export function ItemCard({ item, index }: { item: ParsedItem; index: number }) {
               <AlertCircle className="h-3 w-3" /> 失败
             </Badge>
           )}
+          {issues.length > 0 && highestSeverity && (
+            <Badge variant={highestSeverity}>
+              问题 {issues.length}
+            </Badge>
+          )}
+          {item.reviewed && <Badge variant="success">已确认</Badge>}
           {item.notes && (
             <span className="text-[11px] text-muted-foreground italic">{item.notes}</span>
           )}
@@ -72,6 +105,16 @@ export function ItemCard({ item, index }: { item: ParsedItem; index: number }) {
               <RefreshCw className="h-3 w-3" />
             </Button>
           )}
+          {item.status === 'done' && issues.length > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setReviewed(item.id, !item.reviewed)}
+              title="标记已确认"
+            >
+              <Check className="h-3 w-3" />
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -94,6 +137,25 @@ export function ItemCard({ item, index }: { item: ParsedItem; index: number }) {
       {item.status === 'error' && (
         <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
           {item.error ?? '解析失败'}
+        </div>
+      )}
+
+      {issues.length > 0 && (
+        <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2 space-y-1">
+          {issues.map((issue) => (
+            <button
+              key={issue.id}
+              type="button"
+              onClick={() => focusField(issue.field)}
+              className="block text-left text-xs w-full hover:text-foreground"
+            >
+              <span className="font-medium">
+                {issue.severity === 'error' ? '错误' : issue.severity === 'warning' ? '警告' : '提示'}
+              </span>
+              {' · '}
+              {issue.message}
+            </button>
+          ))}
         </div>
       )}
 

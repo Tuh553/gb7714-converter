@@ -1,23 +1,51 @@
 import * as React from 'react'
-import { Copy, FileText, BookOpen, Check } from 'lucide-react'
+import { Copy, FileText, BookOpen, Check, ArrowDown, ArrowUp } from 'lucide-react'
 import { useWorkStore } from '@/store'
 import { SettingsPanel } from './components/Settings'
 import { InputPanel } from './components/InputPanel'
 import { ItemCard } from './components/ItemCard'
 import { Button, Badge } from './components/ui/primitives'
 import { formatReference } from './lib/gb7714/format'
+import { applyReviewFilter, sortReviewItems } from './lib/review'
+import type { ReviewFilter, ReviewSortMode } from './lib/gb7714/types'
+
+const REVIEW_FILTER_LABELS: Record<ReviewFilter, string> = {
+  all: '全部',
+  issue: '有问题',
+  error: '错误',
+  warning: '警告',
+  missing: '缺字段',
+  failed: '失败',
+  edited: '已修改',
+}
+
+const REVIEW_SORT_LABELS: Record<ReviewSortMode, string> = {
+  original: '原始顺序',
+  'issue-count': '问题最多优先',
+  'recently-edited': '最近修改优先',
+}
 
 export default function App() {
   const items = useWorkStore((s) => s.items)
+  const reviewFilter = useWorkStore((s) => s.reviewFilter)
+  const sortMode = useWorkStore((s) => s.sortMode)
+  const activeReviewId = useWorkStore((s) => s.activeReviewId)
+  const setReviewFilter = useWorkStore((s) => s.setReviewFilter)
+  const setSortMode = useWorkStore((s) => s.setSortMode)
+  const setActiveReviewId = useWorkStore((s) => s.setActiveReviewId)
   const [allCopied, setAllCopied] = React.useState(false)
 
   const doneItems = items.filter((x) => x.status === 'done' && x.ref)
+  const problemItems = applyReviewFilter(items, 'issue')
+  const visibleItems = sortReviewItems(applyReviewFilter(items, reviewFilter), sortMode)
   const stats = {
     total: items.length,
     done: doneItems.length,
     parsing: items.filter((x) => x.status === 'parsing').length,
     error: items.filter((x) => x.status === 'error').length,
-    needReview: doneItems.filter((x) => hasLowConfidence(x.confidence)).length,
+    needReview: problemItems.length,
+    missing: applyReviewFilter(items, 'missing').length,
+    edited: applyReviewFilter(items, 'edited').length,
   }
 
   const copyAll = async () => {
@@ -26,6 +54,24 @@ export default function App() {
     await navigator.clipboard.writeText(lines.join('\n'))
     setAllCopied(true)
     setTimeout(() => setAllCopied(false), 1500)
+  }
+
+  const jumpReviewItem = (direction: -1 | 1) => {
+    const candidates = sortReviewItems(
+      applyReviewFilter(items, reviewFilter === 'all' ? 'issue' : reviewFilter),
+      sortMode,
+    )
+    if (candidates.length === 0) return
+    const currentIndex = candidates.findIndex((item) => item.id === activeReviewId)
+    const nextIndex = currentIndex === -1
+      ? 0
+      : (currentIndex + direction + candidates.length) % candidates.length
+    const next = candidates[nextIndex]
+    setActiveReviewId(next.id)
+    document.getElementById(`item-${next.id}`)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
   }
 
   return (
@@ -63,7 +109,7 @@ export default function App() {
                 {stats.done > 0 && <Badge variant="success">已完成 {stats.done}</Badge>}
                 {stats.error > 0 && <Badge variant="error">失败 {stats.error}</Badge>}
                 {stats.needReview > 0 && (
-                  <Badge variant="warning">{stats.needReview} 条需复核</Badge>
+                  <Badge variant="warning">{stats.needReview} 条待复核</Badge>
                 )}
               </div>
               <Button onClick={copyAll} disabled={doneItems.length === 0} size="sm">
@@ -72,9 +118,75 @@ export default function App() {
               </Button>
             </div>
 
+            <div className="mb-3 rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {(['all', 'issue', 'failed', 'missing', 'edited'] as ReviewFilter[]).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setReviewFilter(filter)}
+                    className={`rounded-md px-2.5 py-1 text-xs border transition ${
+                      reviewFilter === filter
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {REVIEW_FILTER_LABELS[filter]}
+                    {filter === 'issue' && stats.needReview > 0 ? ` ${stats.needReview}` : ''}
+                    {filter === 'missing' && stats.missing > 0 ? ` ${stats.missing}` : ''}
+                    {filter === 'edited' && stats.edited > 0 ? ` ${stats.edited}` : ''}
+                    {filter === 'failed' && stats.error > 0 ? ` ${stats.error}` : ''}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as ReviewSortMode)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  {Object.entries(REVIEW_SORT_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => jumpReviewItem(-1)}
+                  disabled={problemItems.length === 0}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                  上一条问题
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => jumpReviewItem(1)}
+                  disabled={problemItems.length === 0}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                  下一条问题
+                </Button>
+                {activeReviewId && (
+                  <span className="text-xs text-muted-foreground">
+                    当前定位：[{items.findIndex((item) => item.id === activeReviewId) + 1}]
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div className="space-y-2.5">
-              {items.map((item, i) => (
-                <ItemCard key={item.id} item={item} index={i} />
+              {visibleItems.map((item) => (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  index={items.findIndex((source) => source.id === item.id)}
+                  active={item.id === activeReviewId}
+                />
               ))}
             </div>
           </section>
@@ -96,9 +208,4 @@ export default function App() {
       </main>
     </div>
   )
-}
-
-function hasLowConfidence(conf: Record<string, number> | undefined): boolean {
-  if (!conf) return false
-  return Object.values(conf).some((v) => v < 0.85)
 }

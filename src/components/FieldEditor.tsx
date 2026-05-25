@@ -6,6 +6,7 @@ import {
   type Author,
   type FieldName,
   type ParsedItem,
+  type ValidationSeverity,
 } from '@/lib/gb7714/types'
 const FIELD_LABELS: Partial<Record<FieldName, string>> = {
   title: '题名',
@@ -40,8 +41,14 @@ const FIELDS_BY_TYPE: Record<string, FieldName[]> = {
   R: ['title', 'subtitle', 'reportNumber', 'publisherPlace', 'publisher', 'year'],
   'EB/OL': ['title', 'subtitle', 'publishDate', 'accessDate', 'url'],
 }
-function cellClass(value: string, confidence: number | undefined): string {
-  if (!value) return 'border-red-300 bg-red-50'
+function cellClass(
+  value: string,
+  severity: ValidationSeverity | undefined,
+  confidence: number | undefined,
+): string {
+  if (severity === 'error' || !value) return 'border-red-300 bg-red-50'
+  if (severity === 'warning') return 'border-amber-300 bg-amber-50'
+  if (severity === 'hint') return 'border-blue-300 bg-blue-50'
   if (confidence !== undefined && confidence < 0.6) return 'border-red-300 bg-red-50'
   if (confidence !== undefined && confidence < 0.85) return 'border-amber-300 bg-amber-50'
   return 'border-border bg-background'
@@ -51,26 +58,37 @@ export function FieldEditor({ item }: { item: ParsedItem }) {
   if (!item.ref) return null
   const ref = item.ref
   const conf = item.confidence ?? {}
+  const sources = item.sources ?? {}
   const fields = FIELDS_BY_TYPE[ref.type] ?? []
+  const fieldIssueMap = new Map(
+    (item.issues ?? [])
+      .filter((issue) => issue.field)
+      .map((issue) => [issue.field!, issue]),
+  )
   const renderField = (field: FieldName) => {
     const label = FIELD_LABELS[field]
     if (!label) return null
     const value = (ref[field] as string | undefined) ?? ''
     const c = conf[field]
+    const issue = fieldIssueMap.get(field)
     return (
       <div key={field}>
         <label className="text-[11px] text-muted-foreground">
           {label}
           {!value && <span className="text-red-500"> · 空</span>}
+          {sources[field] && <span> · 来源 {sources[field]}</span>}
+          {issue && <span className="text-amber-600"> · {issue.message}</span>}
           {value && c !== undefined && c < 0.85 && (
             <span className="text-amber-600"> · 置信度 {c.toFixed(2)}</span>
           )}
         </label>
         <input
+          data-item-id={item.id}
+          data-field={field}
           type="text"
           value={value}
           onChange={(e) => updateField(item.id, field, e.target.value || undefined)}
-          className={`w-full h-8 rounded border px-2 text-xs ${cellClass(value, c)}`}
+          className={`w-full h-8 rounded border px-2 text-xs ${cellClass(value, issue?.severity, c)}`}
         />
       </div>
     )
@@ -116,6 +134,7 @@ function AuthorEditor({ item }: { item: ParsedItem }) {
   const ref = item.ref!
   const authors = ref.authors ?? []
   const conf = item.confidence?.authors
+  const authorIssue = item.issues?.find((issue) => issue.field === 'authors')
   const setAuthor = (i: number, patch: Partial<Author>) => {
     const next = authors.map((a, idx) => (idx === i ? { ...a, ...patch } : a))
     updateField(item.id, 'authors', next)
@@ -132,13 +151,17 @@ function AuthorEditor({ item }: { item: ParsedItem }) {
     <div>
       <label className="text-[11px] text-muted-foreground">
         作者
+        {item.sources?.authors && <span> · 来源 {item.sources.authors}</span>}
         {lowConf && <span className="text-amber-600"> · 置信度 {conf!.toFixed(2)}</span>}
         {authors.length === 0 && <span className="text-red-500"> · 空</span>}
+        {authorIssue && <span className="text-amber-600"> · {authorIssue.message}</span>}
       </label>
       <div className="space-y-1">
         {authors.map((a, i) => (
           <div key={i} className="flex gap-1 items-center">
             <input
+              data-item-id={item.id}
+              data-field="authors"
               type="text"
               value={a.family ?? ''}
               onChange={(e) => setAuthor(i, { family: e.target.value })}
@@ -146,6 +169,8 @@ function AuthorEditor({ item }: { item: ParsedItem }) {
               className="h-7 w-20 rounded border border-border bg-background text-xs px-1.5"
             />
             <input
+              data-item-id={item.id}
+              data-field="authors"
               type="text"
               value={a.given ?? ''}
               onChange={(e) => setAuthor(i, { given: e.target.value })}
