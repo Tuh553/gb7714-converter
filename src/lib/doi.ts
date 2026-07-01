@@ -7,7 +7,11 @@ import type {
   ValidationIssue,
 } from './gb7714/types'
 
-const DOI_RE = /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i
+const DOI_RE = /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/ig
+const URL_RE = /https?:\/\/[^\s<>"'，。；、]+/gi
+const DOI_LANDING_PAGE_SUFFIX_RE = /\/(?:full|abstract|pdf|epdf|html?|xml|meta)$/i
+const TRAILING_DOI_PUNCTUATION_RE = /[.,;:)\]\u3002\uff0c\uff1b\uff1a\uff09\uff3d]+$/
+const TRAILING_URL_PUNCTUATION_RE = /[.,;)\]\u3002\uff0c\uff1b\uff09\uff3d]+$/
 const doiCache = new Map<string, Partial<Reference>>()
 const DOI_PRIORITY_FIELDS: FieldName[] = [
   'title',
@@ -49,8 +53,24 @@ function hasFieldValue(value: Reference[FieldName] | undefined): boolean {
 }
 
 export function extractIdentifiers(raw: string): IdentifierInfo {
-  const match = raw.match(DOI_RE)
-  return match ? { doi: normalizeDoi(match[0]) } : {}
+  const doi = extractDoi(raw)
+  const url = extractUrl(raw)
+  return {
+    ...(doi ? { doi } : {}),
+    ...(url ? { url } : {}),
+  }
+}
+
+function extractDoi(raw: string): string | undefined {
+  DOI_RE.lastIndex = 0
+  const match = DOI_RE.exec(raw)
+  return match ? normalizeDoi(match[0]) : undefined
+}
+
+function extractUrl(raw: string): string | undefined {
+  URL_RE.lastIndex = 0
+  const match = URL_RE.exec(raw)
+  return match ? normalizeUrl(match[0]) : undefined
 }
 
 export async function enrichByDoi(doi: string, signal?: AbortSignal): Promise<Partial<Reference>> {
@@ -77,7 +97,13 @@ export function clearDoiCache(): void {
 }
 
 function normalizeDoi(doi: string): string {
-  return doi.trim().replace(/[.,;)\]]+$/, '').toLowerCase()
+  let normalized = doi.trim().replace(TRAILING_DOI_PUNCTUATION_RE, '')
+  normalized = normalized.replace(DOI_LANDING_PAGE_SUFFIX_RE, '')
+  return normalized.toLowerCase()
+}
+
+function normalizeUrl(url: string): string {
+  return url.trim().replace(TRAILING_URL_PUNCTUATION_RE, '')
 }
 
 interface MergeResult {

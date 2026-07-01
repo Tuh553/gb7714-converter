@@ -78,6 +78,7 @@ export type FieldSource = 'llm' | 'doi' | 'user'
 
 export interface IdentifierInfo {
   doi?: string
+  url?: string
 }
 
 export type ValidationSeverity = 'error' | 'warning' | 'hint'
@@ -111,3 +112,4 @@ export interface ParsedItem {
   lastEditedAt?: number
   reviewed?: boolean
 }
+
