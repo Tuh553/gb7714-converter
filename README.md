@@ -8,7 +8,7 @@
 - **任意输入**：粘贴中英文混杂、APA / MLA / 旧 GB 等任意格式
 - **智能切分**：自动识别 `[1]` / 行内 `[N]` / `1.` / 空行 / 单行等分隔形式，预览后可手动合并、删除或修改单条原文
 - **并发解析**：每条文献一次 LLM 调用，可配并发数（默认 4，范围 1-16），逐条呈现结果
-- **DOI 补全**：自动识别 DOI，并可从 `doi.org`、ACS、Wiley、Frontiers 等链接中规范化 DOI，再调用 Crossref 补全文题、作者、期刊、年份、卷期页等高置信字段
+- **DOI 补全与交叉核验**：自动识别 DOI，并可从 `doi.org`、ACS、Wiley、Frontiers 等链接中规范化 DOI，再并行调用 Crossref 与 OpenAlex 补全文题、作者、期刊、年份、卷期页、出版者、论文集名等字段；两源一致的字段自动提升置信度，不一致时提示复核
 - **链接识别**：识别 `链接：URL` 或普通 URL，作为结构化标识符保留，减少完全依赖 LLM 猜测
 - **结构化编辑**：解析为字段后可逐字段修改，手动修改会标记来源并重新校验
 - **复核工作流**：按问题、失败、缺字段、已修改筛选；支持问题数排序、最近修改排序、上一条/下一条问题跳转和标记已确认
@@ -77,7 +77,7 @@ pnpm test
 pnpm typecheck
 ```
 
-测试覆盖切分、格式化、LLM 返回解析、DOI 合并、复核筛选/排序，以及真实粘贴样本中的 16 条参考文献切分、URL 提取和 DOI 规范化。
+测试覆盖切分、格式化、LLM 返回解析、DOI 合并、多源交叉核验、复核筛选/排序，以及真实粘贴样本中的 16 条参考文献切分、URL 提取和 DOI 规范化。
 
 ## 部署到 Cloudflare Pages
 
@@ -111,7 +111,7 @@ pnpm dlx wrangler pages deploy dist --project-name=gb7714-converter
 
 - API key 仅存于 `localStorage`，关闭浏览器仍在；可在设置中清空
 - 解析时，粘贴的文本会作为 user message 发送给你配置的 LLM 服务
-- URL 和 DOI 识别在浏览器本地完成；如果识别出 DOI，应用会直接从浏览器请求 Crossref API 拉取公开元数据
+- URL 和 DOI 识别在浏览器本地完成；如果识别出 DOI，应用会直接从浏览器请求 Crossref 与 OpenAlex API 拉取公开元数据
 - 本应用没有任何服务端，亦不收集任何日志
 
 ## 已知限制
@@ -119,7 +119,7 @@ pnpm dlx wrangler pages deploy dist --project-name=gb7714-converter
 - 仅支持顺序编码制（v2 会加 著者-出版年制）
 - 不导出 .docx / RIS（v2 增项）
 - 闭页不保留历史记录
-- DOI 补全依赖 Crossref 可用性；失败时会保留 LLM 解析结果并提示
+- DOI 补全依赖 Crossref / OpenAlex 可用性；两源都失败时会保留 LLM 解析结果并提示
 - DOI 规范化主要覆盖常见 DOI 文本和出版社 landing page 链接，少数非标准跳转链接仍可能需要手动复核
 
 

@@ -11,11 +11,17 @@ import type {
   Reference,
   ReviewFilter,
   ReviewSortMode,
-  ValidationIssue,
 } from '../lib/gb7714/types'
 import { splitReferences, type SplitStrategy } from '../lib/split'
 import { parseReference, type LLMConfig } from '../lib/llm/parse'
-import { enrichByDoi, extractIdentifiers, mergeReference } from '../lib/doi'
+import { extractIdentifiers, mergeReference } from '../lib/doi'
+import {
+  boostEnrichedConfidence,
+  emptyEnrichment,
+  enrichByIdentifiers,
+  enrichmentNote,
+  failedEnrichment,
+} from '../lib/enrich'
 import { validateReference } from '../lib/validation'
 
 interface SettingsState {
@@ -89,43 +95,38 @@ function llmSources(ref: Reference): ParsedItem['sources'] {
   return sources
 }
 
-function createHintIssue(code: string, message: string, field?: ValidationIssue['field']): ValidationIssue {
-  return {
-    id: `hint:${code}:${field ?? 'general'}`,
-    severity: 'hint',
-    code,
-    message,
-    field,
-  }
-}
-
 async function processParsedItem(
   cfg: LLMConfig,
   raw: string,
   signal?: AbortSignal,
 ): Promise<Pick<ParsedItem, 'ref' | 'confidence' | 'notes' | 'issues' | 'sources' | 'identifier' | 'reviewed'>> {
   const identifier = extractIdentifiers(raw)
-  const doiIssues: ValidationIssue[] = []
-  let doiRef: Partial<Reference> = {}
 
-  if (identifier.doi) {
-    try {
-      doiRef = await enrichByDoi(identifier.doi, signal)
-    } catch (error) {
-      const e = error as Error
-      if (e.name === 'AbortError' || signal?.aborted) throw e
-      doiIssues.push(createHintIssue('doi-lookup-failed', 'DOI 元数据拉取失败，已回退到纯 LLM 解析', 'doi'))
-    }
+  // 元数据补全与 LLM 解析相互独立，并行执行降低单条延迟
+  const [enrichSettled, parseSettled] = await Promise.allSettled([
+    identifier.doi ? enrichByIdentifiers(identifier, signal) : Promise.resolve(emptyEnrichment()),
+    parseReference(cfg, raw, signal),
+  ])
+
+  if (signal?.aborted) {
+    const error = new Error('已中止')
+    error.name = 'AbortError'
+    throw error
   }
+  if (parseSettled.status === 'rejected') throw parseSettled.reason
+  const result = parseSettled.value
+  // enrichByIdentifiers 仅在中止时 reject；防御性兜底为「拉取失败」
+  const enrichment = enrichSettled.status === 'fulfilled' ? enrichSettled.value : failedEnrichment()
 
-  const result = await parseReference(cfg, raw, signal)
-  const merged = mergeReference(result.ref, doiRef)
-  const issues = [...merged.warnings, ...doiIssues, ...validateReference(merged.ref)]
+  const merged = mergeReference(result.ref, enrichment.ref)
+  const confidence = boostEnrichedConfidence(result.confidence, merged.sources, enrichment.verifiedFields)
+  const issues = [...merged.warnings, ...enrichment.issues, ...validateReference(merged.ref)]
+  const notes = [result.notes, enrichmentNote(enrichment)].filter(Boolean).join('；') || undefined
 
   return {
     ref: merged.ref,
-    confidence: result.confidence,
-    notes: result.notes,
+    confidence,
+    notes,
     issues,
     sources: Object.keys(merged.sources).length > 0 ? merged.sources : llmSources(result.ref),
     identifier,

@@ -22,6 +22,10 @@ const DOI_PRIORITY_FIELDS: FieldName[] = [
   'issue',
   'pages',
   'doi',
+  'publisher',
+  'publisherPlace',
+  'bookTitle',
+  'bookEditors',
 ]
 
 function initialSources(ref: Reference): Partial<Record<FieldName, FieldSource>> {
@@ -96,7 +100,7 @@ export function clearDoiCache(): void {
   doiCache.clear()
 }
 
-function normalizeDoi(doi: string): string {
+export function normalizeDoi(doi: string): string {
   let normalized = doi.trim().replace(TRAILING_DOI_PUNCTUATION_RE, '')
   normalized = normalized.replace(DOI_LANDING_PAGE_SUFFIX_RE, '')
   return normalized.toLowerCase()
@@ -152,7 +156,10 @@ interface CrossrefWork {
   volume?: string
   issue?: string
   page?: string
+  publisher?: string
+  'publisher-location'?: string
   author?: CrossrefAuthor[]
+  editor?: CrossrefAuthor[]
 }
 
 interface CrossrefAuthor {
@@ -161,12 +168,23 @@ interface CrossrefAuthor {
   name?: string
 }
 
+// proceedings / book-chapter 的 container-title 是论文集名而非刊名
+function containerIsVolume(type: string | undefined): boolean {
+  return type === 'proceedings-article' || type === 'book-chapter'
+}
+
 function crossrefToReference(work: CrossrefWork): Partial<Reference> {
+  const container = work['container-title']?.[0]
+  const isVolume = containerIsVolume(work.type)
   return {
     type: inferTypeFromCrossref(work.type),
     language: 'en',
     title: work.title?.[0],
-    journal: work['container-title']?.[0],
+    journal: isVolume ? undefined : container,
+    bookTitle: isVolume ? container : undefined,
+    bookEditors: formatCrossrefEditors(work.editor),
+    publisher: work.publisher,
+    publisherPlace: work['publisher-location'],
     year: work.issued?.['date-parts']?.[0]?.[0]?.toString(),
     volume: work.volume,
     issue: work.issue,
@@ -174,6 +192,24 @@ function crossrefToReference(work: CrossrefWork): Partial<Reference> {
     doi: work.DOI,
     authors: mapCrossrefAuthors(work.author),
   }
+}
+
+// 编辑者格式化为 GB 西文著者形式: "SMITH J K, LEE M"
+function formatCrossrefEditors(editors: CrossrefAuthor[] | undefined): string | undefined {
+  if (!editors?.length) return undefined
+  const names = editors
+    .map((e) => {
+      if (e.name) return e.name
+      const family = (e.family ?? '').toUpperCase()
+      const initials = (e.given ?? '')
+        .split(/[\s\-.]+/)
+        .filter(Boolean)
+        .map((p) => p.charAt(0).toUpperCase())
+        .join(' ')
+      return [family, initials].filter(Boolean).join(' ')
+    })
+    .filter(Boolean)
+  return names.length ? names.join(', ') : undefined
 }
 
 function inferTypeFromCrossref(type: string | undefined): Reference['type'] | undefined {
