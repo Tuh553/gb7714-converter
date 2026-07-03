@@ -1,11 +1,12 @@
 import * as React from 'react'
-import { Copy, FileText, BookOpen, Check, ArrowDown, ArrowUp } from 'lucide-react'
+import { Copy, FileText, BookOpen, Check, ArrowDown, ArrowUp, Download } from 'lucide-react'
 import { useWorkStore } from '@/store'
 import { SettingsPanel } from './components/Settings'
 import { InputPanel } from './components/InputPanel'
 import { ItemCard } from './components/ItemCard'
 import { Button, Badge } from './components/ui/primitives'
 import { formatReference } from './lib/gb7714/format'
+import { formatBibTeXLibrary } from './lib/gb7714/bibtex'
 import { applyReviewFilter, sortReviewItems } from './lib/review'
 import type { ReviewFilter, ReviewSortMode } from './lib/gb7714/types'
 
@@ -54,6 +55,20 @@ export default function App() {
     await navigator.clipboard.writeText(lines.join('\n'))
     setAllCopied(true)
     setTimeout(() => setAllCopied(false), 1500)
+  }
+
+  const exportBibTeX = () => {
+    if (doneItems.length === 0) return
+
+    const blob = new Blob([formatBibTeXLibrary(doneItems.map((it) => it.ref!))], {
+      type: 'application/x-bibtex;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'references.bib'
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   const jumpReviewItem = (direction: -1 | 1) => {
@@ -112,10 +127,16 @@ export default function App() {
                   <Badge variant="warning">{stats.needReview} 条待复核</Badge>
                 )}
               </div>
-              <Button onClick={copyAll} disabled={doneItems.length === 0} size="sm">
-                {allCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {allCopied ? '已复制全部' : `复制全部 (${doneItems.length})`}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button onClick={exportBibTeX} disabled={doneItems.length === 0} size="sm" variant="outline">
+                  <Download className="h-3.5 w-3.5" />
+                  导出 BibTeX
+                </Button>
+                <Button onClick={copyAll} disabled={doneItems.length === 0} size="sm">
+                  {allCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {allCopied ? '已复制全部' : `复制全部 (${doneItems.length})`}
+                </Button>
+              </div>
             </div>
 
             <div className="mb-3 rounded-lg border border-border bg-muted/30 p-3 space-y-3">
